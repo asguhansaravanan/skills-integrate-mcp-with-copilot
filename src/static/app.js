@@ -3,6 +3,32 @@ document.addEventListener("DOMContentLoaded", () => {
   const activitySelect = document.getElementById("activity");
   const signupForm = document.getElementById("signup-form");
   const messageDiv = document.getElementById("message");
+  const signupContainer = document.getElementById("signup-container");
+  const authButton = document.getElementById("auth-button");
+  const teacherStatus = document.getElementById("teacher-status");
+  const loginModal = document.getElementById("login-modal");
+  const loginForm = document.getElementById("login-form");
+  const loginError = document.getElementById("login-error");
+  let teacherAuthenticated = false;
+
+  function updateTeacherStatus(authenticated, username = "") {
+    teacherAuthenticated = authenticated;
+    signupContainer.classList.toggle("hidden", !authenticated);
+    teacherStatus.textContent = authenticated
+      ? `Teacher view: ${username}`
+      : "Student view (read-only)";
+    authButton.textContent = authenticated ? "Log Out" : "Teacher Login";
+  }
+
+  async function loadTeacherSession() {
+    try {
+      const response = await fetch("/auth/session");
+      const session = await response.json();
+      updateTeacherStatus(session.authenticated, session.username || "");
+    } catch (error) {
+      updateTeacherStatus(false);
+    }
+  }
 
   // Function to fetch activities from API
   async function fetchActivities() {
@@ -12,6 +38,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Clear loading message
       activitiesList.innerHTML = "";
+      activitySelect.innerHTML = '<option value="">-- Select an activity --</option>';
 
       // Populate activities list
       Object.entries(activities).forEach(([name, details]) => {
@@ -30,7 +57,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 ${details.participants
                   .map(
                     (email) =>
-                      `<li><span class="participant-email">${email}</span><button class="delete-btn" data-activity="${name}" data-email="${email}">❌</button></li>`
+                      `<li><span class="participant-email">${email}</span>${teacherAuthenticated ? `<button class="delete-btn" data-activity="${name}" data-email="${email}" aria-label="Unregister ${email}">Remove</button>` : ""}</li>`
                   )
                   .join("")}
               </ul>
@@ -92,6 +119,10 @@ document.addEventListener("DOMContentLoaded", () => {
         // Refresh activities list to show updated participants
         fetchActivities();
       } else {
+        if (response.status === 401) {
+          updateTeacherStatus(false);
+          fetchActivities();
+        }
         messageDiv.textContent = result.detail || "An error occurred";
         messageDiv.className = "error";
       }
@@ -137,6 +168,10 @@ document.addEventListener("DOMContentLoaded", () => {
         // Refresh activities list to show updated participants
         fetchActivities();
       } else {
+        if (response.status === 401) {
+          updateTeacherStatus(false);
+          fetchActivities();
+        }
         messageDiv.textContent = result.detail || "An error occurred";
         messageDiv.className = "error";
       }
@@ -155,6 +190,54 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Initialize app
-  fetchActivities();
+  authButton.addEventListener("click", async () => {
+    if (!teacherAuthenticated) {
+      loginModal.classList.remove("hidden");
+      document.getElementById("username").focus();
+      return;
+    }
+
+    await fetch("/auth/logout", { method: "POST" });
+    updateTeacherStatus(false);
+    await fetchActivities();
+  });
+
+  document.getElementById("close-login").addEventListener("click", () => {
+    loginModal.classList.add("hidden");
+    loginError.classList.add("hidden");
+  });
+
+  loginModal.addEventListener("click", (event) => {
+    if (event.target === loginModal) loginModal.classList.add("hidden");
+  });
+
+  loginForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    loginError.classList.add("hidden");
+    const formData = new FormData(loginForm);
+
+    try {
+      const response = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: formData.get("username"),
+          password: formData.get("password"),
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || "Login failed.");
+
+      updateTeacherStatus(true, result.username);
+      loginModal.classList.add("hidden");
+      loginForm.reset();
+      await fetchActivities();
+    } catch (error) {
+      loginError.textContent = error.message || "Unable to log in.";
+      loginError.classList.remove("hidden");
+    }
+  });
+
+  // Initialize the page with the current server-side session state.
+  loadTeacherSession().then(fetchActivities);
 });
